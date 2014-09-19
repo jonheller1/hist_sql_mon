@@ -85,6 +85,126 @@ C_SOURCE_DONE_ERROR constant varchar2(100) := 'REPORT_SQL_MONITOR finished with 
 C_SOURCE_NO_RESULTS constant varchar2(100) := 'REPORT_SQL_MONITOR did not display any results.';
 
 
+C_HIST_SQL_MON_SQL constant varchar2(32767) :=
+q'<
+----------------------------------
+--Historical SQL Monitoring Report
+----------------------------------
+--Execution plans and ASH data, where there is at least some samples for a plan_hash_value.
+select
+	--Add execution metadtaa.
+	case
+		when plan_table_output like 'Plan hash value: %' then
+			plan_table_output||chr(10)||
+			'Start Time: '||to_char(min_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
+			'End Time: '||to_char(max_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)
+		else
+			plan_table_output
+	end plan_table_output
+--	bulk collect into v_output_lines
+from
+(
+	--Execution plans and ASH data.
+	select
+		plan_table_output
+			||
+			case
+				when plan_table_output like '| Id  |%' then ' Event (count|distinct count)'
+				when ash_string is not null then ' '||ash_string
+			end plan_table_output
+		,count(ash_string) over (partition by execution_plans.plan_hash_value) count_per_hash
+		,execution_plans.plan_hash_value, execution_plans.rownumber
+		,min(min_sample_time) over (partition by execution_plans.plan_hash_value) min_sample_time
+		,max(max_sample_time) over (partition by execution_plans.plan_hash_value) max_sample_time
+	from
+	(
+		-----------------
+		--Execution plans
+		-----------------
+		--Use DISPLAY_CURSOR if possible, else use DISPLAY_AWR.
+		select last_plan_hash_value plan_hash_value, plan_table_output, rownumber
+			,case
+				when regexp_like(plan_table_output, '\|\s*[0-9]* \|.*') then
+					to_number(replace(substr(plan_table_output, 2, 5), '*', null))
+				else
+					null
+			end sql_plan_line_id
+		from
+		(
+			--Exclude repetitive SQL information, count if PLAN_HASH_VALUE has both a cursor and an awr version.
+			select plan_hash_sql_id.*
+				,count(distinct cursor_or_awr) over (partition by last_plan_hash_value) has_both_cursor_and_awr_if_2
+			from
+			(
+				--Latest Plan Hash Value and SQL_ID line.
+				select
+					cursor_or_awr
+					,rownumber
+					,last_value(case when plan_table_output like 'Plan hash value: %' then substr(plan_table_output, 18) end ignore nulls)
+						over (partition by cursor_or_awr order by rownumber) last_plan_hash_value
+					,last_value(case when plan_table_output like 'SQL_ID %' then rownumber else null end ignore nulls)
+						over (partition by cursor_or_awr order by rownumber) last_sql_id_plan
+					,plan_table_output
+				from
+				(
+					--Raw execution plan data.
+					select 'cursor' cursor_or_awr, rownum rownumber, plan_table_output
+					from table(dbms_xplan.display_cursor(sql_id => :p_sql_id))
+					union all
+					select 'awr'    cursor_or_awr, rownum rownumber, plan_table_output
+					from table(dbms_xplan.display_awr(sql_id => :p_sql_id))
+				) raw_execution_plan_data
+			) plan_hash_sql_id
+			--Remove the repetitive "SQL_ID ...." text at the top.
+			where rownumber >= last_sql_id_plan + 4
+			order by rownumber
+		) exclude_repetitive_sql
+		where cursor_or_awr = 'cursor' or has_both_cursor_and_awr_if_2 = 1
+		order by cursor_or_awr, rownumber
+	) execution_plans
+	left join
+	(
+		-----------
+		--ASH data.
+		-----------
+		select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time
+			,listagg(event||' ('||sample_count||'|'||sample_distinct_count||')', ', ')
+				within group (order by sample_count desc) ash_string
+		from
+		(
+			--ASH summary.
+			select sql_plan_hash_value, sql_plan_line_id, event
+				,count(*) sample_count
+				,count(distinct sample_time) sample_distinct_count
+				,min(sample_time) min_sample_time
+				,max(sample_time) max_sample_time
+			from
+			(
+				--ASH raw data.
+				select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+				from gv$active_session_history
+				where sql_id = :p_sql_id
+				--TODO: Filter time
+				union all
+				select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+				from dba_hist_active_sess_history
+				where sql_id = :p_sql_id
+				--TODO: Filter time
+			) ash_raw_data
+			group by sql_plan_hash_value, sql_plan_line_id, event
+			order by sql_plan_hash_value, sql_plan_line_id, count(*)
+		) ash_summary
+		group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time
+	) ash_data
+		on execution_plans.plan_hash_value = ash_data.sql_plan_hash_value
+		and execution_plans.sql_plan_line_id = ash_data.sql_plan_line_id
+	order by execution_plans.plan_hash_value, execution_plans.rownumber
+) execution_plans_and_ash_data
+where count_per_hash > 0
+order by plan_hash_value, rownumber
+>'; --' Fix PL/SQL Developer parsing bug.
+
+
 
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -173,41 +293,6 @@ begin
 		' P_START_TIME_FILTER : '||nvl(to_char(p_start_time_filter, 'YYYY-MM-DD HH24:MI:SS'), 'NULL')||chr(10)||
 		' P_END_TIME_FILTER   : '||nvl(to_char(p_end_time_filter, 'YYYY-MM-DD HH24:MI:SS'), 'NULL')||chr(10)||chr(10)||chr(10);
 
-
-/*
-
-
-
-
-SQL Monitoring Report
-
-SQL Text
-------------------------------
-SELECT COUNT(*) FROM DBA_TABLES CROSS JOIN DBA_TABLES
-
-Error: ORA-1013
-------------------------------
-ORA-01013: user requested cancel of current operation
-
-
-Global Information
-------------------------------
- Status              :  DONE (ERROR)                                      
- Instance ID         :  1                                                 
- Session             :  JHELLER (10:31289)                                
- SQL ID              :  2ssrz4j1m39wx                                     
- SQL Execution ID    :  16777219                                          
- Execution Started   :  09/14/2014 20:49:59                               
- First Refresh Time  :  09/14/2014 20:50:05                               
- Last Refresh Time   :  09/14/2014 20:50:06                               
- Duration            :  7s                                                
- Module/Action       :  PL/SQL Developer/SQL Window - --Loop declare v_co 
- Service             :  orcl12                                            
- Program             :  plsqldev.exe                                      
- Fetch Calls         :  1                                                 
-*/
-
-
 	return v_header;
 end get_hist_sql_mon_header;
 
@@ -222,6 +307,7 @@ function hist_sql_mon(
 return clob is
 	v_output_lines sys.odcivarchar2list;
 	v_output_clob clob;
+	v_sql clob;
 begin
 	--Check license.
 	check_diag_license;
@@ -232,108 +318,17 @@ begin
 	--Get header.
 	v_output_clob := get_hist_sql_mon_header(p_sql_id, p_start_time_filter, p_end_time_filter, p_source);
 
-	----------------------------------
-	--Historical SQL Monitoring Report
-	----------------------------------
-	--Execution plans and ASH data, where there is at least some samples for a plan_hash_value.
-	select plan_table_output
+	--Execute statement.
+	execute immediate C_HIST_SQL_MON_SQL
 	bulk collect into v_output_lines
-	from
-	(
-		--Execution plans and ASH data.
-		select
-			plan_table_output
-				||
-				case
-					when plan_table_output like '| Id  |%' then ' Event (count|distinct count)'
-					when ash_string is not null then ' '||ash_string
-				end plan_table_output
-			,count(ash_string) over (partition by execution_plans.plan_hash_value) count_per_hash
-			,execution_plans.plan_hash_value, execution_plans.rownumber
-		from
-		(
-			-----------------
-			--Execution plans
-			-----------------
-			--Use DISPLAY_CURSOR if possible, else use DISPLAY_AWR.
-			select last_plan_hash_value plan_hash_value, plan_table_output, rownumber
-				,case
-					when regexp_like(plan_table_output, '\|\s*[0-9]* \|.*') then
-						to_number(replace(substr(plan_table_output, 2, 5), '*', null))
-					else
-						null
-				end sql_plan_line_id
-			from
-			(
-				--Exclude repetitive SQL information, count if PLAN_HASH_VALUE has both a cursor and an awr version.
-				select plan_hash_sql_id.*
-					,count(distinct cursor_or_awr) over (partition by last_plan_hash_value) has_both_cursor_and_awr_if_2
-				from
-				(
-					--Latest Plan Hash Value and SQL_ID line.
-					select
-						cursor_or_awr
-						,rownumber
-						,last_value(case when plan_table_output like 'Plan hash value: %' then substr(plan_table_output, 18) end ignore nulls)
-							over (partition by cursor_or_awr order by rownumber) last_plan_hash_value
-						,last_value(case when plan_table_output like 'SQL_ID %' then rownumber else null end ignore nulls)
-							over (partition by cursor_or_awr order by rownumber) last_sql_id_plan
-						,plan_table_output
-					from
-					(
-						--Raw execution plan data.
-						select 'cursor' cursor_or_awr, rownum rownumber, plan_table_output
-						from table(dbms_xplan.display_cursor(sql_id => p_sql_id))
-						union all
-						select 'awr'    cursor_or_awr, rownum rownumber, plan_table_output
-						from table(dbms_xplan.display_awr(sql_id => p_sql_id))
-					) raw_execution_plan_data
-				) plan_hash_sql_id
-				--Remove the repetitive "SQL_ID ...." text at the top.
-				where rownumber >= last_sql_id_plan + 4
-				order by rownumber
-			) exclude_repetitive_sql
-			where cursor_or_awr = 'cursor' or has_both_cursor_and_awr_if_2 = 1
-			order by cursor_or_awr, rownumber
-		) execution_plans
-		left join
-		(
-			-----------
-			--ASH data.
-			-----------
-			select sql_plan_hash_value, sql_plan_line_id
-				,listagg(event||' ('||sample_count||'|'||sample_distinct_count||')', ', ')
-					within group (order by sample_count desc) ash_string
-			from
-			(
-				--ASH summary.
-				select sql_plan_hash_value, sql_plan_line_id, event
-					,count(*) sample_count
-					,count(distinct sample_time) sample_distinct_count
-				from
-				(
-					--ASH raw data.
-					select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
-					from gv$active_session_history
-					where sql_id = p_sql_id
-					--TODO: Filter time
-					union all
-					select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
-					from dba_hist_active_sess_history
-					where sql_id = p_sql_id
-					--TODO: Filter time
-				) ash_raw_data
-				group by sql_plan_hash_value, sql_plan_line_id, event
-				order by sql_plan_hash_value, sql_plan_line_id, count(*)
-			) ash_summary
-			group by sql_plan_hash_value, sql_plan_line_id
-		) ash_data
-			on execution_plans.plan_hash_value = ash_data.sql_plan_hash_value
-			and execution_plans.sql_plan_line_id = ash_data.sql_plan_line_id
-		order by execution_plans.plan_hash_value, execution_plans.rownumber
-	) execution_plans_and_ash_data
-	where count_per_hash > 0
-	order by plan_hash_value, rownumber;
+	using p_sql_id, p_sql_id, p_sql_id, p_sql_id;
+
+	--Print it out for debugging.
+	--Since some tools have 4K limit, split it up around first linefeed after 3800.
+	v_sql := replace(C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||'''');
+	dbms_output.enable(1000000);
+	dbms_output.put_line(substr(v_sql, 1, instr(v_sql, chr(10), 3800)-1));
+	dbms_output.put_line(substr(v_sql, instr(v_sql, chr(10), 3800)+1));
 
 	--Convert lines to CLOB.
 	for i in 1 .. v_output_lines.count loop
