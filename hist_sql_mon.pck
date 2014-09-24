@@ -14,7 +14,9 @@ Privilege Requirements:
 		grant select on gv_$active_session_history to <install_schema>;
 		grant select on dba_hist_active_sess_history to <install_schema>;
 		grant select on dba_hist_sqltext to <install_schema>;
-
+		grant select on dba_hist_snapshot to <install_schema>;
+		grant select on v_$database to <install_schema>;
+		grant select on dba_hist_wr_control to <install_schema>;
 TODO:
 	What about DBMS_SQL_MONITOR?
 */
@@ -101,7 +103,6 @@ select
 		else
 			plan_table_output
 	end plan_table_output
---	bulk collect into v_output_lines
 from
 (
 	--Execution plans and ASH data.
@@ -184,11 +185,14 @@ from
 				select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 				from gv$active_session_history
 				where sql_id = :p_sql_id
+					and :uses_v$ash = 1
 				--TODO: Filter time
 				union all
 				select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 				from dba_hist_active_sess_history
 				where sql_id = :p_sql_id
+					--Enable partition pruning.
+					and snap_id between :start_snap_id and :end_snap_id
 				--TODO: Filter time
 			) ash_raw_data
 			group by sql_plan_hash_value, sql_plan_line_id, event
@@ -203,8 +207,6 @@ from
 where count_per_hash > 0
 order by plan_hash_value, rownumber
 >'; --' Fix PL/SQL Developer parsing bug.
-
-
 
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -238,6 +240,93 @@ end check_diag_license;
 
 
 ------------------------------------------------------------------------------------------------------------------------
+--Purpose: Convert start and end dates to start and stop SNAP_IDs, and a flag for whether or not to use v$ASH view.
+procedure get_time_values(
+	p_start_time_filter  in  date,
+	p_end_time_filter    in  date,
+	p_out_start_snap_id  out number,
+	p_out_start_date     out date,
+	p_out_end_snap_id    out number,
+	p_out_end_date       out date,
+	p_out_uses_v$ash     out number,
+	p_out_warning        out varchar2
+) is
+	v_min_snap_id number;
+	v_min_snap_date date;
+	v_max_snap_id number;
+	v_max_snap_date date;
+begin
+	--Get min and max snapshot data.
+	select min(snap_id), min(begin_interval_time), max(snap_id), max(end_interval_time)
+	into v_min_snap_id, v_min_snap_date, v_max_snap_id, v_max_snap_date
+	from dba_hist_snapshot
+	where dbid = (select dbid from v$database);
+
+	--Error if input start date is after current date.
+	if p_start_time_filter >= sysdate then
+		raise_application_error(-20000, 'Start date must be in the past.');
+	end if;
+
+	--Error if input start date is on or after input end date.
+	if p_start_time_filter >= p_end_time_filter then
+		raise_application_error(-20000, 'Start date must be earlier than end date.');
+	end if;
+
+	--Error if input end date before first snapshot interval.
+	if p_end_time_filter <= v_min_snap_date then
+		declare
+			v_retention varchar2(4000);
+		begin
+			--Get current retention period.
+			select to_char(retention)
+			into v_retention
+			from dba_hist_wr_control
+			where dbid = (select dbid from v$database);
+
+			--Display error.
+			raise_application_error(-20000, 'The end date, '||to_char(p_end_time_filter, 'YYYY-MM-DD HH24:MI:SS')||
+				', is before the start of the earliest snapshot, '||to_char(v_min_snap_date, 'YYYY-MM-DD HH24:MI:SS')||
+				'.  The current retention is '||v_retention||'.  Use DBMS_WORKLOAD_REPOSITORY to increase retention, '||
+				'but that will only help in the future.');
+		end;
+	end if;
+
+	--Find start snap and date.
+	if p_start_time_filter is null then
+		p_out_start_snap_id := v_min_snap_id;
+		p_out_start_date := v_min_snap_date;
+	elsif p_start_time_filter <= v_min_snap_date then
+		p_out_start_snap_id := v_min_snap_id;
+		p_out_start_date := v_min_snap_date;
+		p_out_warning := 'Start date is before the earliest snapshot, some data may be missing.';
+	else
+		--Get snap and date.
+		select snap_id, p_start_time_filter
+		into p_out_start_snap_id, p_out_start_date
+		from dba_hist_snapshot
+		where dbid = (select dbid from v$database)
+			and p_start_time_filter between begin_interval_time and end_interval_time;
+	end if;
+
+	--Find end snap and date.
+	if p_end_time_filter is null or p_end_time_filter >= v_max_snap_date then
+		p_out_end_snap_id := v_max_snap_id;
+		p_out_end_date := sysdate;
+		p_out_uses_v$ash := 1;
+	else
+		--Get snap and date.
+		select snap_id, p_end_time_filter
+		into p_out_end_snap_id, p_out_end_date
+		from dba_hist_snapshot
+		where dbid = (select dbid from v$database)
+			and p_end_time_filter between begin_interval_time and end_interval_time;
+
+		p_out_uses_v$ash := 0;
+	end if;
+end get_time_values;
+
+
+------------------------------------------------------------------------------------------------------------------------
 --Purpose: Determine if the report was generated or not.  Detection is different for each type.
 function is_report_generated(type in varchar2, p_clob in out nocopy clob) return boolean is
 begin
@@ -257,7 +346,7 @@ end is_report_generated;
 ------------------------------------------------------------------------------------------------------------------------
 --Purpose: Determine if the report was generated or not.  Detection is different for each type.
 function get_hist_sql_mon_header(p_sql_id in varchar2, p_start_time_filter date, p_end_time_filter date
-	,p_source in varchar2)
+	,p_source in varchar2, p_time_range_warning in varchar2)
 return clob is
 	v_header clob;
 	v_reason varchar2(100);
@@ -291,7 +380,14 @@ begin
 		' SQL_ID              : '||p_sql_id||chr(10)||
 		' SQL_TEXT            : '||v_sql_text_first_100_char||chr(10)||
 		' P_START_TIME_FILTER : '||nvl(to_char(p_start_time_filter, 'YYYY-MM-DD HH24:MI:SS'), 'NULL')||chr(10)||
-		' P_END_TIME_FILTER   : '||nvl(to_char(p_end_time_filter, 'YYYY-MM-DD HH24:MI:SS'), 'NULL')||chr(10)||chr(10)||chr(10);
+		' P_END_TIME_FILTER   : '||nvl(to_char(p_end_time_filter, 'YYYY-MM-DD HH24:MI:SS'), 'NULL')||chr(10);
+
+	--Add warnings about dates being outside of AWR range.
+	if p_time_range_warning is not null then
+		v_header := v_header||' WARNING             : '||p_time_range_warning||chr(10);
+	end if;
+
+	v_header := v_header||chr(10)||chr(10);
 
 	return v_header;
 end get_hist_sql_mon_header;
@@ -308,24 +404,33 @@ return clob is
 	v_output_lines sys.odcivarchar2list;
 	v_output_clob clob;
 	v_sql clob;
+
+	v_start_snap_id number;
+	v_start_date date;
+	v_end_snap_id number;
+	v_end_date date;
+	v_uses_v$ash number;
+	v_warning varchar2(4000);
 begin
 	--Check license.
 	check_diag_license;
 
 	--Find time period.
-	--TODO
+	get_time_values(p_start_time_filter,p_end_time_filter,v_start_snap_id,
+		v_start_date,v_end_snap_id,v_end_date,v_uses_v$ash,v_warning);
 
 	--Get header.
-	v_output_clob := get_hist_sql_mon_header(p_sql_id, p_start_time_filter, p_end_time_filter, p_source);
+	v_output_clob := get_hist_sql_mon_header(p_sql_id, p_start_time_filter, p_end_time_filter, p_source, v_warning);
 
 	--Execute statement.
 	execute immediate C_HIST_SQL_MON_SQL
 	bulk collect into v_output_lines
-	using p_sql_id, p_sql_id, p_sql_id, p_sql_id;
+	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, p_sql_id, v_start_snap_id, v_end_snap_id;
 
 	--Print it out for debugging.
 	--Since some tools have 4K limit, split it up around first linefeed after 3800.
-	v_sql := replace(C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||'''');
+	v_sql := replace(replace(replace(replace(C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||''''), ':uses_v$ash', '/*uses_v$ash*/'||v_uses_v$ash)
+		,':start_snap_id', v_start_snap_id), ':end_snap_id', v_end_snap_id);
 	dbms_output.enable(1000000);
 	dbms_output.put_line(substr(v_sql, 1, instr(v_sql, chr(10), 3800)-1));
 	dbms_output.put_line(substr(v_sql, instr(v_sql, chr(10), 3800)+1));
@@ -400,7 +505,7 @@ begin
 	);
 
 
-	--TODO: if 
+	--TODO: if
 	if not is_report_generated(type, v_clob) then
 		dbms_output.put_line('not generated');
 	else
