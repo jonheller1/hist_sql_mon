@@ -99,7 +99,16 @@ select
 		when plan_table_output like 'Plan hash value: %' then
 			plan_table_output||chr(10)||
 			'Start Time: '||to_char(min_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
-			'End Time: '||to_char(max_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)
+			'End Time: '||to_char(max_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
+			--Add note about where the data came from.
+			case
+				when has_active_data = 1 and has_historical_data = 1 then
+					'Data came from both GV$ACTIVE_SESSION_HISTORY and DBA_HIST_ACTIVE_SESS_HISTORY.'
+				when has_active_data = 1 and has_historical_data = 0 then
+					'Data came from GV$ACTIVE_SESSION_HISTORY only.'
+				when has_active_data = 0 and has_historical_data = 1 then
+					'Data came from DBA_HIST_ACTIVE_SESS_HISTORY only.'
+			end
 		else
 			plan_table_output
 	end plan_table_output
@@ -117,6 +126,8 @@ from
 		,execution_plans.plan_hash_value, execution_plans.rownumber
 		,min(min_sample_time) over (partition by execution_plans.plan_hash_value) min_sample_time
 		,max(max_sample_time) over (partition by execution_plans.plan_hash_value) max_sample_time
+		,max(has_active_data) over (partition by execution_plans.plan_hash_value) has_active_data
+		,max(has_historical_data) over (partition by execution_plans.plan_hash_value) has_historical_data
 	from
 	(
 		-----------------
@@ -169,6 +180,7 @@ from
 		--ASH data.
 		-----------
 		select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time
+			,has_active_data, has_historical_data
 			,listagg(event||' ('||sample_count||'|'||sample_distinct_count||')', ', ')
 				within group (order by sample_count desc) ash_string
 		from
@@ -179,26 +191,30 @@ from
 				,count(distinct sample_time) sample_distinct_count
 				,min(sample_time) min_sample_time
 				,max(sample_time) max_sample_time
+				,max(case when active_1_historical_2 = 1 then 1 else 0 end) has_active_data
+				,max(case when active_1_historical_2 = 2 then 1 else 0 end) has_historical_data
 			from
 			(
 				--ASH raw data.
-				select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+				select 1 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 				from gv$active_session_history
 				where sql_id = :p_sql_id
 					and :uses_v$ash = 1
 				--TODO: Filter time
 				union all
-				select sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+				select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 				from dba_hist_active_sess_history
 				where sql_id = :p_sql_id
 					--Enable partition pruning.
+					--Note that DBA_HIST_* tables do not always have matching SNAP_IDs.
+					--If this table has data that's not in DBA_HIST_SNAPSHOT it will be excluded here.
 					and snap_id between :start_snap_id and :end_snap_id
 				--TODO: Filter time
 			) ash_raw_data
 			group by sql_plan_hash_value, sql_plan_line_id, event
 			order by sql_plan_hash_value, sql_plan_line_id, count(*)
 		) ash_summary
-		group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time
+		group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data
 	) ash_data
 		on execution_plans.plan_hash_value = ash_data.sql_plan_hash_value
 		and execution_plans.sql_plan_line_id = ash_data.sql_plan_line_id
