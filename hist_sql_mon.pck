@@ -9,14 +9,9 @@ Requirements: TODO
 Licensing requirements: diagnostics pack.
 
 Privilege Requirements:
-	Run as SYS:
-		grant select on v_$parameter to <install_schema>;
-		grant select on gv_$active_session_history to <install_schema>;
-		grant select on dba_hist_active_sess_history to <install_schema>;
-		grant select on dba_hist_sqltext to <install_schema>;
-		grant select on dba_hist_snapshot to <install_schema>;
-		grant select on v_$database to <install_schema>;
-		grant select on dba_hist_wr_control to <install_schema>;
+TODO:
+	DBA, advisor, select any table, select_catalog_role?
+
 TODO:
 	What about DBMS_SQL_MONITOR?
 */
@@ -230,7 +225,8 @@ order by plan_hash_value, rownumber
 procedure check_diag_and_tuning_license is
 	v_license varchar2(4000);
 begin
-	select value into v_license from v$parameter where name = 'control_management_pack_access';
+	execute immediate q'<select value from v$parameter where name = 'control_management_pack_access'>'
+	into v_license ;
 
 	if v_license <> 'DIAGNOSTIC+TUNING' then
 		raise_application_error(-20000, 'This procedure requires the diagnostic and tuning pack.  The parameter '||
@@ -245,7 +241,8 @@ end check_diag_and_tuning_license;
 procedure check_diag_license is
 	v_license varchar2(4000);
 begin
-	select value into v_license from v$parameter where name = 'control_management_pack_access';
+	execute immediate q'<select value from v$parameter where name = 'control_management_pack_access'>'
+	into v_license;
 
 	if v_license not in ('DIAGNOSTIC+TUNING', 'DIAGNOSTIC') then
 		raise_application_error(-20000, 'This procedure requires the diagnostic pack.  The parameter '||
@@ -273,10 +270,12 @@ procedure get_time_values(
 	v_max_snap_date date;
 begin
 	--Get min and max snapshot data.
-	select min(snap_id), min(begin_interval_time), max(snap_id), max(end_interval_time)
-	into v_min_snap_id, v_min_snap_date, v_max_snap_id, v_max_snap_date
-	from dba_hist_snapshot
-	where dbid = (select dbid from v$database);
+	execute immediate q'<
+		select min(snap_id), min(begin_interval_time), max(snap_id), max(end_interval_time)
+		from dba_hist_snapshot
+		where dbid = (select dbid from v$database)
+	>'
+	into v_min_snap_id, v_min_snap_date, v_max_snap_id, v_max_snap_date;
 
 	--Error if input start date is after current date.
 	if p_start_time_filter >= sysdate then
@@ -294,10 +293,12 @@ begin
 			v_retention varchar2(4000);
 		begin
 			--Get current retention period.
-			select to_char(retention)
-			into v_retention
-			from dba_hist_wr_control
-			where dbid = (select dbid from v$database);
+			execute immediate q'<
+				select to_char(retention)
+				from dba_hist_wr_control
+				where dbid = (select dbid from v$database)
+			>'
+			into v_retention;
 
 			--Display error.
 			raise_application_error(-20000, 'The end date, '||to_char(p_end_time_filter, 'YYYY-MM-DD HH24:MI:SS')||
@@ -317,11 +318,14 @@ begin
 		p_out_warning := 'Start date is before the earliest snapshot, some data may be missing.';
 	else
 		--Get snap and date.
-		select snap_id, p_start_time_filter
+		execute immediate q'<
+			select snap_id, p_start_time_filter
+			from dba_hist_snapshot
+			where dbid = (select dbid from v$database)
+				and :p_start_time_filter between begin_interval_time and end_interval_time
+		>'
 		into p_out_start_snap_id, p_out_start_date
-		from dba_hist_snapshot
-		where dbid = (select dbid from v$database)
-			and p_start_time_filter between begin_interval_time and end_interval_time;
+		using p_start_time_filter;
 	end if;
 
 	--Find end snap and date.
@@ -331,11 +335,14 @@ begin
 		p_out_uses_v$ash := 1;
 	else
 		--Get snap and date.
-		select snap_id, p_end_time_filter
+		execute immediate q'<
+			select snap_id, p_end_time_filter
+			from dba_hist_snapshot
+			where dbid = (select dbid from v$database)
+				and :p_end_time_filter between begin_interval_time and end_interval_time
+		>'
 		into p_out_end_snap_id, p_out_end_date
-		from dba_hist_snapshot
-		where dbid = (select dbid from v$database)
-			and p_end_time_filter between begin_interval_time and end_interval_time;
+		using p_end_time_filter;
 
 		p_out_uses_v$ash := 0;
 	end if;
@@ -369,13 +376,16 @@ return clob is
 	v_sql_text_first_100_char varchar2(100);
 begin
 	--Title
-	v_header := q'<Historical SQL Monitoring (when Real-Time SQL Monitoring doesn't work)>'||chr(10)||chr(10);
+	v_header := q'<Historical SQL Monitoring (when Real-Time SQL Monitoring does not work)>'||chr(10)||chr(10);
 
 	--SQL Text.  Replace new-lines so that text is all on one line.
-	select regexp_replace(replace(substr(sql_text, 1, 100), chr(10), null), '\s+', ' ')
+	execute immediate q'<
+		select regexp_replace(replace(substr(sql_text, 1, 100), chr(10), null), '\s+', ' ')
+		from dba_hist_sqltext
+		where sql_id = :p_sql_id
+	>'
 	into v_sql_text_first_100_char
-	from dba_hist_sqltext
-	where sql_id = p_sql_id;
+	using p_sql_id;
 
 	--Reason called
 	if p_source = C_SOURCE_DIRECT then
