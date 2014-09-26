@@ -81,7 +81,7 @@ C_SOURCE_NO_RESULTS constant varchar2(100) := 'REPORT_SQL_MONITOR did not displa
 
 
 C_HIST_SQL_MON_SQL constant varchar2(32767) :=
-q'<
+substr(q'<
 ----------------------------------
 --Historical SQL Monitoring Report
 ----------------------------------
@@ -92,7 +92,7 @@ select
 		when plan_table_output like 'Plan hash value: %' then
 			plan_table_output||chr(10)||
 			'Start Time: '||to_char(min_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
-			'End Time: '||to_char(max_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
+			'End Time  : '||to_char(max_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
 			--Add note about where the data came from.
 			case
 				when has_active_data = 1 and has_historical_data = 1 then
@@ -179,23 +179,25 @@ from
 		from
 		(
 			--ASH summary.
-			select sql_plan_hash_value, sql_plan_line_id, event
+			select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, event
 				,count(*) sample_count
 				,count(distinct sample_time) sample_distinct_count
-				,min(sample_time) min_sample_time
-				,max(sample_time) max_sample_time
 				,max(case when active_1_historical_2 = 1 then 1 else 0 end) has_active_data
 				,max(case when active_1_historical_2 = 2 then 1 else 0 end) has_historical_data
 			from
 			(
 				--ASH raw data.
-				select 1 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+				select 1 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time,
+					min(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) min_sample_time,
+					max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time
 				from gv$active_session_history
 				where sql_id = :p_sql_id
 					and :uses_v$ash = 1
 				--TODO: Filter time
 				union all
-				select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+				select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time,
+					min(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) min_sample_time,
+					max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time
 				from dba_hist_active_sess_history
 				where sql_id = :p_sql_id
 					--Enable partition pruning.
@@ -204,7 +206,7 @@ from
 					and snap_id between :start_snap_id and :end_snap_id
 				--TODO: Filter time
 			) ash_raw_data
-			group by sql_plan_hash_value, sql_plan_line_id, event
+			group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, event
 			order by sql_plan_hash_value, sql_plan_line_id, count(*)
 		) ash_summary
 		group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data
@@ -215,7 +217,7 @@ from
 ) execution_plans_and_ash_data
 where count_per_hash > 0
 order by plan_hash_value, rownumber
->'; --' Fix PL/SQL Developer parsing bug.
+>', 2); --' Fix PL/SQL Developer parsing bug.
 
 
 ------------------------------------------------------------------------------------------------------------------------
