@@ -70,9 +70,7 @@ function REPORT_SQL_MONITOR(
 	)
 RETURN CLOB;
 
-
-
-end;
+end hist_sql_mon;
 /
 create or replace package body hist_sql_mon is
 
@@ -319,13 +317,13 @@ begin
 	else
 		--Get snap and date.
 		execute immediate q'<
-			select snap_id, p_start_time_filter
+			select snap_id, :p_start_time_filter
 			from dba_hist_snapshot
 			where dbid = (select dbid from v$database)
 				and :p_start_time_filter between begin_interval_time and end_interval_time
 		>'
 		into p_out_start_snap_id, p_out_start_date
-		using p_start_time_filter;
+		using p_start_time_filter, p_start_time_filter;
 	end if;
 
 	--Find end snap and date.
@@ -336,13 +334,13 @@ begin
 	else
 		--Get snap and date.
 		execute immediate q'<
-			select snap_id, p_end_time_filter
+			select snap_id, :p_end_time_filter
 			from dba_hist_snapshot
 			where dbid = (select dbid from v$database)
 				and :p_end_time_filter between begin_interval_time and end_interval_time
 		>'
 		into p_out_end_snap_id, p_out_end_date
-		using p_end_time_filter;
+		using p_end_time_filter, p_end_time_filter;
 
 		p_out_uses_v$ash := 0;
 	end if;
@@ -560,5 +558,5 @@ begin
 	end if;
 end report_sql_monitor;
 
-end;
+end hist_sql_mon;
 /
