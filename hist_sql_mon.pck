@@ -179,33 +179,27 @@ from
 		from
 		(
 			--ASH summary.
-			select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, event
+			select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
 				,count(*) sample_count
 				,count(distinct sample_time) sample_distinct_count
-				,max(case when active_1_historical_2 = 1 then 1 else 0 end) has_active_data
-				,max(case when active_1_historical_2 = 2 then 1 else 0 end) has_historical_data
 			from
 			(
 				--ASH raw data with min and max sample times.
 				select active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, event, sample_time,
 					min(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) min_sample_time,
-					max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time
+					max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time,
+					max(case when active_1_historical_2 = 1 then 1 else 0 end) over (partition by sql_plan_hash_value, sql_plan_line_id) has_active_data,
+					max(case when active_1_historical_2 = 2 then 1 else 0 end) over (partition by sql_plan_hash_value, sql_plan_line_id) has_historical_data
 				from
 				(
-
-
 					--ASH raw data.
-					select 1 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time,
-						min(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) min_sample_time,
-						max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time
+					select 1 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 					from gv$active_session_history
 					where sql_id = :p_sql_id
 						and :uses_v$ash = 1
 					--TODO: Filter time
 					union all
-					select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time,
-						min(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) min_sample_time,
-						max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time
+					select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 					from dba_hist_active_sess_history
 					where sql_id = :p_sql_id
 						--Enable partition pruning.
@@ -215,7 +209,7 @@ from
 					--TODO: Filter time
 				) ash_raw_data
 			) ash_raw_min_max_sample_time
-			group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, event
+			group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
 			order by sql_plan_hash_value, sql_plan_line_id, count(*)
 		) ash_summary
 		group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data
