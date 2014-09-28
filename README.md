@@ -15,7 +15,10 @@ There are two ways to call Historical SQL Monitoring.
 
 * As a replacement for `DBMS_SQLTUNE.REPORT_SQL_MONITOR`.  Simply call `HIST_SQL_MON.REPORT_SQL_MONITOR` with the exact same parameters.  If Real-Time SQL Monitoring works correctly, it will return only that information.  If it fails, it will use Historical SQL Monitoring results instead.
 
-        select hist_sql_mon.report_sql_monitor(sql_id => '2ssrz4j1m39wx', type => 'active') from dual;
+        select hist_sql_mon.report_sql_monitor(
+            sql_id => '2ssrz4j1m39wx',
+            type   => 'active')
+        from dual;
 
 * Directly, for old queries.  
 
