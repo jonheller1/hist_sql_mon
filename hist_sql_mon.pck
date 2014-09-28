@@ -87,7 +87,7 @@ substr(q'<
 ----------------------------------
 --Execution plans and ASH data, where there is at least some samples for a plan_hash_value.
 select
-	--Add execution metadtaa.
+	--Add execution metadata.
 	case
 		when plan_table_output like 'Plan hash value: %' then
 			plan_table_output||chr(10)||
@@ -96,11 +96,11 @@ select
 			--Add note about where the data came from.
 			case
 				when has_active_data = 1 and has_historical_data = 1 then
-					'Data came from both GV$ACTIVE_SESSION_HISTORY and DBA_HIST_ACTIVE_SESS_HISTORY.'
+					'Source    : Data came from both GV$ACTIVE_SESSION_HISTORY and DBA_HIST_ACTIVE_SESS_HISTORY.'
 				when has_active_data = 1 and has_historical_data = 0 then
-					'Data came from GV$ACTIVE_SESSION_HISTORY only.'
+					'Source    : Data came from GV$ACTIVE_SESSION_HISTORY only.'
 				when has_active_data = 0 and has_historical_data = 1 then
-					'Data came from DBA_HIST_ACTIVE_SESS_HISTORY only.'
+					'Source    : Data came from DBA_HIST_ACTIVE_SESS_HISTORY only.'
 			end
 		else
 			plan_table_output
