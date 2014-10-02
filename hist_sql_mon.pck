@@ -74,11 +74,14 @@ end hist_sql_mon;
 /
 create or replace package body hist_sql_mon is
 
+--Session state to avoid checking privileges if they were already met.
+g_hist_sql_mon_privs_met boolean := false;
+
+
 --What is the source of the request?  This is useful for printing messages.
 C_SOURCE_DIRECT constant varchar2(100) := 'Results were directly requested from user.';
 C_SOURCE_DONE_ERROR constant varchar2(100) := 'REPORT_SQL_MONITOR finished with Done (Error).';
 C_SOURCE_NO_RESULTS constant varchar2(100) := 'REPORT_SQL_MONITOR did not display any results.';
-
 
 C_HIST_SQL_MON_SQL constant varchar2(32767) :=
 substr(q'<
@@ -91,16 +94,16 @@ select
 	case
 		when plan_table_output like 'Plan hash value: %' then
 			plan_table_output||chr(10)||
-			'Start Time: '||to_char(min_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
-			'End Time  : '||to_char(max_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
+			'Start Time     : '||to_char(min_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
+			'End Time       : '||to_char(max_sample_time, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
 			--Add note about where the data came from.
 			case
 				when has_active_data = 1 and has_historical_data = 1 then
-					'Source    : Data came from both GV$ACTIVE_SESSION_HISTORY and DBA_HIST_ACTIVE_SESS_HISTORY.'
+					'Source         : Data came from both GV$ACTIVE_SESSION_HISTORY and DBA_HIST_ACTIVE_SESS_HISTORY.'
 				when has_active_data = 1 and has_historical_data = 0 then
-					'Source    : Data came from GV$ACTIVE_SESSION_HISTORY only.'
+					'Source         : Data came from GV$ACTIVE_SESSION_HISTORY only.'
 				when has_active_data = 0 and has_historical_data = 1 then
-					'Source    : Data came from DBA_HIST_ACTIVE_SESS_HISTORY only.'
+					'Source         : Data came from DBA_HIST_ACTIVE_SESS_HISTORY only.'
 			end
 		else
 			plan_table_output
@@ -223,6 +226,7 @@ order by plan_hash_value, rownumber
 >', 2); --' Fix PL/SQL Developer parsing bug.
 
 
+
 ------------------------------------------------------------------------------------------------------------------------
 --Purpose: Raise exception if diagnostic and tuning packs are not licensed.
 procedure check_diag_and_tuning_license is
@@ -253,6 +257,52 @@ begin
 			'current value is '||v_license||'.');
 	end if;
 end check_diag_license;
+
+
+------------------------------------------------------------------------------------------------------------------------
+--Purpose: Check for privileges needed for HIST_SQL_MON and throw a helpful error message if any are missing.
+--	There is no equivalant for REPORT_SQL_MONITOR because I don't know exactly what that package requires.
+procedure check_hist_sql_mon_privs is
+	v_table_does_not_exist exception;
+	pragma exception_init(v_table_does_not_exist, -00942);
+
+	v_tables sys.odcivarchar2list := sys.odcivarchar2list(
+		'v$parameter',
+		'dba_hist_snapshot',
+		'v$database',
+		'dba_hist_sqltext',
+		'gv$active_session_history',
+		'dba_hist_active_sess_history'
+	);
+	v_missing_privs varchar2(32767);
+begin
+	--Don't check if privileges were already met once.
+	if not g_hist_sql_mon_privs_met then
+		--Check for access to each table.
+		for i in 1 .. v_tables.count loop
+			begin
+				execute immediate 'select 1 from '||v_tables(i)||' where rownum = 0';
+			exception when v_table_does_not_exist then
+				v_missing_privs := v_missing_privs || ', '||v_tables(i);
+			end;
+		end loop;
+
+		--Raise error if any were missing.
+		if v_missing_privs is not null then
+			raise_application_error(-20000, 'Cannot run hist_sql_mon.hist_sql_mon().  '||
+				sys_context('userenv', 'session_user')||' is missing SELECT privileges on '||
+				'these tables: '||substr(v_missing_privs, 2)||'.'||chr(10)||
+				'There are at least three ways to solve this:'||chr(10)||
+				'1. GRANT SELECT ANY DATA DICTIONARY TO '||sys_context('userenv', 'session_user')||';'||chr(10)||
+				'2. GRANT SELECT_CATALOG_ROLE TO '||sys_context('userenv', 'session_user')||';'||chr(10)||
+				'3. Grant select on tables listed above to '||sys_context('userenv', 'session_user')||'.'
+			);
+		--Set flag and do nothing if nothing is missing.
+		else
+			g_hist_sql_mon_privs_met := true;
+		end if;
+	end if;
+end check_hist_sql_mon_privs;
 
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -441,7 +491,8 @@ return clob is
 	v_uses_v$ash number;
 	v_warning varchar2(4000);
 begin
-	--Check license.
+	--Check privileges and license.
+	check_hist_sql_mon_privs;
 	check_diag_license;
 
 	--Find time period.

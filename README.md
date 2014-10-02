@@ -60,12 +60,23 @@ The functions also print the SQL statement to DBMS_OUTPUT.  The bind variables a
 ## How to Install
 
 Run `hist_sql_mon.pck` on any schema and optionally execute:
-`create public synonym hist_sql_mon for hist_sql_mon;`  Creating the package requires very little privileges, but calling the package requires one of the following:
+`create public synonym hist_sql_mon for hist_sql_mon;` and `grant execute on hist_sql_mon to public;`.
 
-1. `grant select any dictionary to <schema>;`
-2. `grant select_catalog_role to <schema>;`
-3. `grant select on ...` these tables, either directly or through a role: `sys.v_$parameter, sys.dba_hist_snapshot, sys.v_$database, sys.dba_hist_sqltext, sys.gv_$active_session_history, sys.dba_hist_active_sess_history`
+Installing requires few privileges but executing requires elevated privileges for the caller.  The exact privileges depend on the function called:
 
+1. `hist_sql_mon.hist_sql_mon`
+  1. Configuration Pack AND
+  2. One of the following privileges:
+     1. `grant select any dictionary to <schema>;` OR
+     2. `grant select_catalog_role to <schema>;` OR
+     3. `grant select on ...` these tables, either directly or through a role: `sys.v_$parameter`, `sys.dba_hist_snapshot`, `sys.v_$database`, `sys.dba_hist_sqltext`, `sys.gv_$active_session_history`, `sys.dba_hist_active_sess_history`.
+
+2. `hist_sql_mon.report_sql_monitor`
+  1. Configuration Pack AND
+  2. Diagnostic Pack AND
+  3. One of the following privileges:
+     1. `grant select any dictionary to <schema>;` OR
+     2. `grant select_catalog_role to <schema>;`
 
 ## How to Get Help
 Create a Github issue.  Or send an email to the creator, Jon Heller, at jonearles@yahoo.com
