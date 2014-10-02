@@ -69,7 +69,7 @@ Installing requires few privileges but executing requires elevated privileges fo
   2. One of the following privileges:
      1. `grant select any dictionary to <schema>;` OR
      2. `grant select_catalog_role to <schema>;` OR
-     3. `grant select on ...` these tables, either directly or through a role: `sys.v_$parameter`, `sys.dba_hist_snapshot`, `sys.v_$database`, `sys.dba_hist_sqltext`, `sys.gv_$active_session_history`, `sys.dba_hist_active_sess_history`.
+     3. `grant select on ...` these tables, either directly or through a role: `sys.v_$parameter`, `sys.dba_hist_snapshot`, `sys.v_$database`, `sys.dba_hist_sqltext`, `sys.gv_$active_session_history`, `sys.dba_hist_active_sess_history`, `sys.gv_$sql`.
 
 2. `hist_sql_mon.report_sql_monitor`
   1. Configuration Pack AND

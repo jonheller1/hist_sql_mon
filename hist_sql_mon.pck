@@ -272,7 +272,8 @@ procedure check_hist_sql_mon_privs is
 		'v$database',
 		'dba_hist_sqltext',
 		'gv$active_session_history',
-		'dba_hist_active_sess_history'
+		'dba_hist_active_sess_history',
+		'sys.gv_$sql'
 	);
 	v_missing_privs varchar2(32767);
 begin
@@ -432,13 +433,27 @@ begin
 	v_header := q'<Historical SQL Monitoring (when Real-Time SQL Monitoring does not work)>'||chr(10)||chr(10);
 
 	--SQL Text.  Replace new-lines so that text is all on one line.
-	execute immediate q'<
-		select regexp_replace(replace(substr(sql_text, 1, 100), chr(10), null), '\s+', ' ')
-		from dba_hist_sqltext
-		where sql_id = :p_sql_id
-	>'
-	into v_sql_text_first_100_char
-	using p_sql_id;
+	begin
+		execute immediate q'<
+			select coalesce(
+				(
+					select to_char(regexp_replace(replace(substr(sql_text, 1, 100), chr(10), null), '\s+', ' '))
+					from dba_hist_sqltext
+					where sql_id = :p_sql_id
+				),
+				(
+					select distinct to_char(regexp_replace(replace(substr(sql_text, 1, 100), chr(10), null), '\s+', ' '))
+					from gv$sql
+					where sql_id = :p_sql_id
+				)
+			)
+			from dual
+		>'
+		into v_sql_text_first_100_char
+		using p_sql_id, p_sql_id;
+	exception when no_data_found then
+		raise_application_error(-20000, 'asdf');
+	end;
 
 	--Reason called
 	if p_source = C_SOURCE_DIRECT then
@@ -519,6 +534,11 @@ begin
 	for i in 1 .. v_output_lines.count loop
 		v_output_clob := v_output_clob || v_output_lines(i) || chr(10);
 	end loop;
+
+	--If there were no lines, print message.
+	if v_output_lines.count = 0 then
+		v_output_clob := v_output_clob || 'No data found.';
+	end if;
 
 	return v_output_clob;
 end;
