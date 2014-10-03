@@ -200,7 +200,7 @@ from
 					from gv$active_session_history
 					where sql_id = :p_sql_id
 						and :uses_v$ash = 1
-					--TODO: Filter time
+						and sample_time between :start_date and :end_date
 					union all
 					select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 					from dba_hist_active_sess_history
@@ -209,7 +209,7 @@ from
 						--Note that DBA_HIST_* tables do not always have matching SNAP_IDs.
 						--If this table has data that's not in DBA_HIST_SNAPSHOT it will be excluded here.
 						and snap_id between :start_snap_id and :end_snap_id
-					--TODO: Filter time
+						and sample_time between :start_date and :end_date
 				) ash_raw_data
 			) ash_raw_min_max_sample_time
 			group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
@@ -520,12 +520,18 @@ begin
 	--Execute statement.
 	execute immediate C_HIST_SQL_MON_SQL
 	bulk collect into v_output_lines
-	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, p_sql_id, v_start_snap_id, v_end_snap_id;
+	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, p_sql_id, v_start_snap_id
+		,v_end_snap_id, v_start_date, v_end_date;
 
 	--Print it out for debugging.
 	--Since some tools have 4K limit, split it up around first linefeed after 3800.
-	v_sql := replace(replace(replace(replace(C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||''''), ':uses_v$ash', '/*uses_v$ash*/'||v_uses_v$ash)
-		,':start_snap_id', v_start_snap_id), ':end_snap_id', v_end_snap_id);
+	v_sql := replace(replace(replace(replace(replace(replace(
+			C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||'''')
+		, ':uses_v$ash', '/*uses_v$ash*/'||v_uses_v$ash)
+		,':start_snap_id', v_start_snap_id)
+		,':end_snap_id', v_end_snap_id)
+		,':start_date', 'timestamp '''||to_char(v_start_date, 'YYYY-MM-DD HH24:MI:SS')||'''')
+		,':end_date', 'timestamp '''||to_char(v_end_date, 'YYYY-MM-DD HH24:MI:SS')||'''');
 	dbms_output.enable(1000000);
 	dbms_output.put_line(substr(v_sql, 1, instr(v_sql, chr(10), 3800)-1));
 	dbms_output.put_line(substr(v_sql, instr(v_sql, chr(10), 3800)+1));
