@@ -430,7 +430,7 @@ return clob is
 	v_sql_text_first_100_char varchar2(100);
 begin
 	--Title
-	v_header := q'<Historical SQL Monitoring (when Real-Time SQL Monitoring does not work)>'||chr(10)||chr(10);
+	v_header := 'Historical SQL Monitoring '||C_VERSION||' (when Real-Time SQL Monitoring does not work)'||chr(10)||chr(10);
 
 	--SQL Text.  Replace new-lines so that text is all on one line.
 	begin
