@@ -373,10 +373,11 @@ begin
 	else
 		--Get snap and date.
 		execute immediate q'<
-			select snap_id, :p_start_time_filter
+			--Get first interval on or before time.  Not `between` begin and end interval - there may be missing snapshots.
+			select max(snap_id) keep (dense_rank last order by begin_interval_time), :p_start_time_filter
 			from dba_hist_snapshot
 			where dbid = (select dbid from v$database)
-				and :p_start_time_filter between begin_interval_time and end_interval_time
+				and :p_start_time_filter >= begin_interval_time
 		>'
 		into p_out_start_snap_id, p_out_start_date
 		using p_start_time_filter, p_start_time_filter;
@@ -390,10 +391,11 @@ begin
 	else
 		--Get snap and date.
 		execute immediate q'<
-			select snap_id, :p_end_time_filter
+			--Get first interval on or after time.  Not `between` begin and end interval - there may be missing snapshots.
+			select min(snap_id) keep (dense_rank first order by begin_interval_time), :p_end_time_filter
 			from dba_hist_snapshot
 			where dbid = (select dbid from v$database)
-				and :p_end_time_filter between begin_interval_time and end_interval_time
+				and :p_end_time_filter <= begin_interval_time
 		>'
 		into p_out_end_snap_id, p_out_end_date
 		using p_end_time_filter, p_end_time_filter;
@@ -547,7 +549,10 @@ begin
 	end if;
 
 	return v_output_clob;
-end;
+exception when no_data_found then
+	raise_application_error(-20000, 'Re-raising NO_DATA_FOUND error because they are suppressed in SELECT statements.'||
+		chr(10)||dbms_utility.format_error_stack||dbms_utility.format_error_backtrace);
+end hist_sql_mon;
 
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -638,6 +643,10 @@ begin
 	else
 		return v_clob;
 	end if;
+
+exception when no_data_found then
+	raise_application_error(-20000, 'Re-raising NO_DATA_FOUND error because they are suppressed in SELECT statements.'||
+		chr(10)||dbms_utility.format_error_stack||dbms_utility.format_error_backtrace);
 end report_sql_monitor;
 
 end hist_sql_mon;
