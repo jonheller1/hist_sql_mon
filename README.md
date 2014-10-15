@@ -82,5 +82,10 @@ Installing requires few privileges but executing requires elevated privileges fo
 Create a Github issue.  Or send an email to the creator, Jon Heller, at jonearles@yahoo.com
 
 
+## Alternatives
+
+Oracle 12c has a Performance Hub, which includes Monitored SQL in historical mode.  But this program will still likely be useful in 12c since SQL Monitoring has unresolved bugs and will not always correctly monitor statements.
+
+
 ## License
 `hist_sql_mon` is licensed under the LGPL.

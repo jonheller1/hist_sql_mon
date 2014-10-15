@@ -395,7 +395,7 @@ begin
 			select min(snap_id) keep (dense_rank first order by begin_interval_time), :p_end_time_filter
 			from dba_hist_snapshot
 			where dbid = (select dbid from v$database)
-				and :p_end_time_filter <= begin_interval_time
+				and :p_end_time_filter <= end_interval_time
 		>'
 		into p_out_end_snap_id, p_out_end_date
 		using p_end_time_filter, p_end_time_filter;
@@ -549,6 +549,7 @@ begin
 	end if;
 
 	return v_output_clob;
+
 exception when no_data_found then
 	raise_application_error(-20000, 'Re-raising NO_DATA_FOUND error because they are suppressed in SELECT statements.'||
 		chr(10)||dbms_utility.format_error_stack||dbms_utility.format_error_backtrace);
