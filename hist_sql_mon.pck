@@ -208,6 +208,7 @@ from
 						--Enable partition pruning.
 						--Note that DBA_HIST_* tables do not always have matching SNAP_IDs.
 						--If this table has data that's not in DBA_HIST_SNAPSHOT it will be excluded here.
+						and dbid = :dbid
 						and snap_id between :start_snap_id and :end_snap_id
 						and sample_time between :start_date and :end_date
 				) ash_raw_data
@@ -311,6 +312,7 @@ end check_hist_sql_mon_privs;
 procedure get_time_values(
 	p_start_time_filter  in  date,
 	p_end_time_filter    in  date,
+	p_out_dbid           out number,
 	p_out_start_snap_id  out number,
 	p_out_start_date     out date,
 	p_out_end_snap_id    out number,
@@ -323,6 +325,13 @@ procedure get_time_values(
 	v_max_snap_id number;
 	v_max_snap_date date;
 begin
+	--Get DBID.
+	execute immediate q'<
+		select dbid
+		from v$database
+	>'
+	into p_out_dbid;
+
 	--Get min and max snapshot data.
 	execute immediate q'<
 		select min(snap_id), min(begin_interval_time), max(snap_id), max(end_interval_time)
@@ -501,6 +510,7 @@ return clob is
 	v_output_clob clob;
 	v_sql clob;
 
+	v_dbid number;
 	v_start_snap_id number;
 	v_start_date date;
 	v_end_snap_id number;
@@ -513,7 +523,7 @@ begin
 	check_diag_license;
 
 	--Find time period.
-	get_time_values(p_start_time_filter,p_end_time_filter,v_start_snap_id,
+	get_time_values(p_start_time_filter,p_end_time_filter,v_dbid,v_start_snap_id,
 		v_start_date,v_end_snap_id,v_end_date,v_uses_v$ash,v_warning);
 
 	--Get header.
@@ -522,18 +532,19 @@ begin
 	--Execute statement.
 	execute immediate C_HIST_SQL_MON_SQL
 	bulk collect into v_output_lines
-	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, p_sql_id, v_start_snap_id
-		,v_end_snap_id, v_start_date, v_end_date;
+	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, p_sql_id, v_dbid
+		,v_start_snap_id, v_end_snap_id, v_start_date, v_end_date;
 
 	--Print it out for debugging.
 	--Since some tools have 4K limit, split it up around first linefeed after 3800.
-	v_sql := replace(replace(replace(replace(replace(replace(
+	v_sql := replace(replace(replace(replace(replace(replace(replace(
 			C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||'''')
 		, ':uses_v$ash', '/*uses_v$ash*/'||v_uses_v$ash)
 		,':start_snap_id', v_start_snap_id)
 		,':end_snap_id', v_end_snap_id)
 		,':start_date', 'timestamp '''||to_char(v_start_date, 'YYYY-MM-DD HH24:MI:SS')||'''')
-		,':end_date', 'timestamp '''||to_char(v_end_date, 'YYYY-MM-DD HH24:MI:SS')||'''');
+		,':end_date', 'timestamp '''||to_char(v_end_date, 'YYYY-MM-DD HH24:MI:SS')||'''')
+		,':dbid', to_char(v_dbid));
 	dbms_output.enable(1000000);
 	dbms_output.put_line(substr(v_sql, 1, instr(v_sql, chr(10), 3800)-1));
 	dbms_output.put_line(substr(v_sql, instr(v_sql, chr(10), 3800)+1));
