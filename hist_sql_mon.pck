@@ -102,7 +102,7 @@ from
 		plan_table_output
 			||
 			case
-				when plan_table_output like '| Id  |%' then ' Event (count|distinct count)'
+				when plan_table_output like '| Id  |%' then ' '||trim('Event (count|distinct count) ')
 				when ash_string is not null then ' '||ash_string
 			end plan_table_output
 		,count(ash_string) over (partition by execution_plans.plan_hash_value) count_per_hash
@@ -164,14 +164,15 @@ from
 		-----------
 		select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time
 			,has_active_data, has_historical_data
-			,listagg(event||' ('||sample_count||'|'||sample_distinct_count||')', ', ')
+			,listagg(event||' ('||sample_count||'|'||sample_distinct_count||trim(') '), ', ')
 				within group (order by sample_count desc) ash_string
 		from
 		(
 			--ASH summary.
-			select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
-				,count(*) sample_count
-				,count(distinct sample_time) sample_distinct_count
+			select active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
+				--Multiply historical data by 10 since it is sampled 1/10th as much as active data.
+				,case when active_1_historical_2 = 1 then count(*) else count(*) * 10 end sample_count
+				,case when active_1_historical_2 = 1 then count(distinct sample_time) else count(distinct sample_time) * 10 end sample_distinct_count
 			from
 			(
 				--ASH raw data with min and max sample times.
@@ -188,6 +189,8 @@ from
 					where sql_id = :p_sql_id
 						and :uses_v$ash = 1
 						and sample_time between :start_date and :end_date
+						--Exclude data that will be in DBA_HIST.
+						and sample_time > :max_snap_date
 					union all
 					select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
 					from dba_hist_active_sess_history
@@ -200,8 +203,8 @@ from
 						and sample_time between :start_date and :end_date
 				) ash_raw_data
 			) ash_raw_min_max_sample_time
-			group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
-			order by sql_plan_hash_value, sql_plan_line_id, count(*)
+			group by active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
+			order by active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, count(*)
 		) ash_summary
 		group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data
 	) ash_data
@@ -211,7 +214,7 @@ from
 ) execution_plans_and_ash_data
 where count_per_hash > 0
 order by plan_hash_value, rownumber
->', 2); --' Fix PL/SQL Developer parsing bug.
+>', 2);
 
 
 
@@ -305,12 +308,12 @@ procedure get_time_values(
 	p_out_end_snap_id    out number,
 	p_out_end_date       out date,
 	p_out_uses_v$ash     out number,
+	p_out_max_snap_date  out date,
 	p_out_warning        out varchar2
 ) is
 	v_min_snap_id number;
 	v_min_snap_date date;
 	v_max_snap_id number;
-	v_max_snap_date date;
 begin
 	--Get DBID.
 	execute immediate q'<
@@ -325,7 +328,7 @@ begin
 		from dba_hist_snapshot
 		where dbid = (select dbid from v$database)
 	>'
-	into v_min_snap_id, v_min_snap_date, v_max_snap_id, v_max_snap_date;
+	into v_min_snap_id, v_min_snap_date, v_max_snap_id, p_out_max_snap_date;
 
 	--Error if input start date is after current date.
 	if p_start_time_filter >= sysdate then
@@ -380,7 +383,7 @@ begin
 	end if;
 
 	--Find end snap and date.
-	if p_end_time_filter is null or p_end_time_filter >= v_max_snap_date then
+	if p_end_time_filter is null or p_end_time_filter >= p_out_max_snap_date then
 		p_out_end_snap_id := v_max_snap_id;
 		p_out_end_date := sysdate;
 		p_out_uses_v$ash := 1;
@@ -503,6 +506,7 @@ return clob is
 	v_end_snap_id number;
 	v_end_date date;
 	v_uses_v$ash number;
+	v_max_snap_date date;
 	v_warning varchar2(4000);
 begin
 	--Check privileges and license.
@@ -511,7 +515,7 @@ begin
 
 	--Find time period.
 	get_time_values(p_start_time_filter,p_end_time_filter,v_dbid,v_start_snap_id,
-		v_start_date,v_end_snap_id,v_end_date,v_uses_v$ash,v_warning);
+		v_start_date,v_end_snap_id,v_end_date,v_uses_v$ash,v_max_snap_date,v_warning);
 
 	--Get header.
 	v_output_clob := get_hist_sql_mon_header(p_sql_id, p_start_time_filter, p_end_time_filter, p_source, v_warning);
@@ -519,16 +523,17 @@ begin
 	--Execute statement.
 	execute immediate C_HIST_SQL_MON_SQL
 	bulk collect into v_output_lines
-	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, p_sql_id, v_dbid
+	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, v_max_snap_date, p_sql_id, v_dbid
 		,v_start_snap_id, v_end_snap_id, v_start_date, v_end_date;
 
 	--Print it out for debugging.
 	--Since some tools have 4K limit, split it up around first linefeed after 3800.
-	v_sql := replace(replace(replace(replace(replace(replace(replace(
+	v_sql := replace(replace(replace(replace(replace(replace(replace(replace(
 			C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||'''')
 		, ':uses_v$ash', '/*uses_v$ash*/'||v_uses_v$ash)
 		,':start_snap_id', v_start_snap_id)
 		,':end_snap_id', v_end_snap_id)
+		,':max_snap_date', 'timestamp '''||to_char(v_max_snap_date, 'YYYY-MM-DD HH24:MI:SS')||'''')
 		,':start_date', 'timestamp '''||to_char(v_start_date, 'YYYY-MM-DD HH24:MI:SS')||'''')
 		,':end_date', 'timestamp '''||to_char(v_end_date, 'YYYY-MM-DD HH24:MI:SS')||'''')
 		,':dbid', to_char(v_dbid));
