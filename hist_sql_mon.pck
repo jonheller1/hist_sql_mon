@@ -3,22 +3,6 @@ create or replace package hist_sql_mon authid current_user is
 C_VERSION constant varchar2(100) := '0.1.0';
 
 /*
-
-
-Requirements: TODO
-Licensing requirements: diagnostics pack.
-
-Privilege Requirements:
-TODO:
-	DBA, advisor, select any table, select_catalog_role?
-
-TODO:
-	What about DBMS_SQL_MONITOR?
-*/
-
-
-
-/*
 	Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
 		to recreate results similar to REPORT_SQL_MONITOR.
 
@@ -39,6 +23,8 @@ function hist_sql_mon(
 	)
 return clob;
 
+/*
+TODO: Does not work yet.
 
 --Parameters are identical to DBMS_SQLTUNE.REPORT_SQL_MONITOR:
 --http://docs.oracle.com/cd/E11882_01/appdev.112/e40758/d_sqltun.htm#ARPLS68444
@@ -69,6 +55,7 @@ function REPORT_SQL_MONITOR(
 	dbop_exec_id              IN NUMBER    DEFAULT  NULL
 	)
 RETURN CLOB;
+*/
 
 end hist_sql_mon;
 /
