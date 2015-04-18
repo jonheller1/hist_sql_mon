@@ -61,4 +61,4 @@ Oracle 12c has a Performance Hub, which includes Monitored SQL in historical mod
 
 
 ## License
-`hist_sql_mon` is licensed under the LGPL.
+`hist_sql_mon` is licensed under the LGPLv3.

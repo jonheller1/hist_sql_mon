@@ -1,20 +1,15 @@
 create or replace package hist_sql_mon authid current_user is
+--Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '0.1.0';
+C_VERSION constant varchar2(100) := '1.0.0';
 
 /*
-	Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
-		to recreate results similar to REPORT_SQL_MONITOR.
+Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
+	to recreate results similar to REPORT_SQL_MONITOR.
 
-		The paramount task of performance tuning is to focus on what is slow.  Most methods focus
-		on a period of time or aggregate tasks at a high level.  In a DSS or DW system an individual
-		SQL statement may run for hours or days.  This method aggregates wait events and time at
-		an operation level.  This makes it clear which part of a SQL statement is slow, and why.
-
-	Parameters:
-		sql_id - SQL_ID to monitor.
-		start|end_time_filter - Period of time to monitor.  If blank, will find last contiguous
-			execution of the statement.
+Parameters:
+	sql_id - SQL_ID to monitor.
+	p_start_time_filter, p_end_time_filter - Period of time to monitor.
 */
 function hist_sql_mon(
 	p_sql_id                    IN VARCHAR2,
@@ -574,6 +569,8 @@ end hist_sql_mon;
 
 ------------------------------------------------------------------------------------------------------------------------
 /*
+TODO: Not implemented yet
+
 Use Real Time SQL Monitoring if possible.  If not available, return Historical SQL Monitoring.
 Parameters: Same as DBMS_SQLTUNE.REPORT_SQL_MONITOR.
 Requires: The diagnostics AND the tuning pack.
@@ -619,30 +616,22 @@ begin
 		$END
 	);
 
+	--Use Historical if Real-Time is not available.  Real-Time fails for at least two reasons:
+	--1: SQL Monitoring results are temporary, and bug 15928155 will cause results to disappear if an operation
+	--	takes more than 30 minutes.
+	--2: Bugs prevent some queries from being monitored at all.
 
-	--TODO: if
+	--TODO: Need to distinguish between no results vs. broken results.
 	if not is_report_generated(type, v_clob) then
 		dbms_output.put_line('not generated');
 	else
 		dbms_output.put_line('generated');
 	end if;
 
-
-	--Use Historical if Real-Time is not available.  Real-Time fails for at least two reasons:
-	--1: SQL Monitoring results are temporary, and bug 15928155 will cause results to disappear if an operation
-	--	takes more than 30 minutes.
-	--2: Bugs prevent some queries from being monitored at all.
-	--TODO: If active report, what will the clob look like?
 	if v_clob is null or v_clob = 'SQL Monitoring Report' then
-		/*
-			Find last execution interval
-			Historical monitoring of the SQL_ID for that interval
-			
-			report_hist_sql_monitor(p_sql_id, p_start_date, 
-
-		*/
-
-
+		--Find last execution interval
+		--Historical monitoring of the SQL_ID for that interval
+		--report_hist_sql_monitor(p_sql_id, p_start_date,
 		return 'Could not find SQL Monitoring Report ... TODO';
 	else
 		return v_clob;
