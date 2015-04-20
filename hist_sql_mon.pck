@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.0.0';
+C_VERSION constant varchar2(100) := '1.0.1';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -247,7 +247,7 @@ end check_diag_license;
 
 ------------------------------------------------------------------------------------------------------------------------
 --Purpose: Check for privileges needed for HIST_SQL_MON and throw a helpful error message if any are missing.
---	There is no equivalant for REPORT_SQL_MONITOR because I don't know exactly what that package requires.
+--	There is no equivalant for REPORT_SQL_MONITOR because I do not know exactly what that package requires.
 procedure check_hist_sql_mon_privs is
 	v_table_does_not_exist exception;
 	pragma exception_init(v_table_does_not_exist, -00942);
@@ -263,7 +263,7 @@ procedure check_hist_sql_mon_privs is
 	);
 	v_missing_privs varchar2(32767);
 begin
-	--Don't check if privileges were already met once.
+	--Do not check if privileges were already met once.
 	if not g_hist_sql_mon_privs_met then
 		--Check for access to each table.
 		for i in 1 .. v_tables.count loop
