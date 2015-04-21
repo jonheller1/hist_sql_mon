@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.0.1';
+C_VERSION constant varchar2(100) := '1.1.0';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -87,6 +87,10 @@ select
 				when has_active_data = 0 and has_historical_data = 1 then
 					'Source         : Data came from DBA_HIST_ACTIVE_SESS_HISTORY only.'
 			end
+		when plan_table_output like '|%' then
+			rpad(plan_table_output, max_output_length - 1, ' ') || '|'
+		when plan_table_output like lpad('-', 60, '-')||'%' then
+			rpad(plan_table_output, max_output_length, '=')
 		else
 			plan_table_output
 	end plan_table_output
@@ -100,6 +104,17 @@ from
 				when plan_table_output like '| Id  |%' then ' '||trim('Event (count|distinct count) ')
 				when ash_string is not null then ' '||ash_string
 			end plan_table_output
+		--Determine the maximum line length, for creating a text box.
+		,max(nvl(length(
+			case when plan_table_output like '|%' then
+				plan_table_output
+					||
+					case
+						when plan_table_output like '| Id  |%' then ' '||trim('Event (count|distinct count) ')
+						when ash_string is not null then ' '||ash_string
+					end
+			else null end
+		), 0)) over (partition by execution_plans.plan_hash_value) + 1 max_output_length
 		,count(ash_string) over (partition by execution_plans.plan_hash_value) count_per_hash
 		,execution_plans.plan_hash_value, execution_plans.rownumber
 		,min(min_sample_time) over (partition by execution_plans.plan_hash_value) min_sample_time

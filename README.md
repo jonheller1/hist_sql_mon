@@ -19,15 +19,15 @@ It resolves some limitations of [Real-Time SQL Monitoring](http://www.oracle.com
 
 The primary output is a CLOB containing an execution plan with a count and distinct count of events.
 
-    ----------------------------------------------------------------------
-    | Id  | Operation              | Name   | Rows  | Bytes | Cost (%CPU)| Event (count|distinct count)
-    ----------------------------------------------------------------------
-    |   0 | SELECT STATEMENT       |        |       |       | 83031 (100)|
-    |   1 |  SORT AGGREGATE        |        |     1 |   234 |            |
-    |   2 |   HASH JOIN RIGHT OUTER|        |  8116K|  1811M| 83031   (4)| Cpu (25|25)
-    |   3 |    INDEX FULL SCAN     | I_USER2|   155 |   620 |     1   (0)|
-    |   4 |    NESTED LOOPS OUTER  |        |  8116K|  1780M| 82993   (4)| Cpu (1|1)
-    |   5 |     NESTED LOOPS OUTER |        |  8116K|  1718M| 10702  (24)| Cpu (2|2)
+    ----------------------------------------------------------------------=============================|
+    | Id  | Operation              | Name   | Rows  | Bytes | Cost (%CPU)| Event (count|distinct count)|
+    ----------------------------------------------------------------------=============================|
+    |   0 | SELECT STATEMENT       |        |       |       | 83031 (100)|                             |
+    |   1 |  SORT AGGREGATE        |        |     1 |   234 |            |                             |
+    |   2 |   HASH JOIN RIGHT OUTER|        |  8116K|  1811M| 83031   (4)| Cpu (25|25)                 |
+    |   3 |    INDEX FULL SCAN     | I_USER2|   155 |   620 |     1   (0)|                             |
+    |   4 |    NESTED LOOPS OUTER  |        |  8116K|  1780M| 82993   (4)| Cpu (1|1)                   |
+    |   5 |     NESTED LOOPS OUTER |        |  8116K|  1718M| 10702  (24)| Cpu (2|2)                   |
     ...
 
 The functions also print the SQL statement to DBMS_OUTPUT.  The bind variables are replaced with hard-coded values so the query can run anywhere.  This can help with debugging or creating your own queries.
