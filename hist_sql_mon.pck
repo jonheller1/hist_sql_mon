@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.2.0';
+C_VERSION constant varchar2(100) := '1.2.1';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -176,14 +176,14 @@ from
 		-----------
 		select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time
 			,has_active_data, has_historical_data
-			,'     '||max(count_percent)||' | '||
+			,'     '||to_char(sum(count_percent * 100), '999.00')||' | '||
 			listagg(event||' ('||sample_count||'|'||sample_distinct_count||trim(') '), ', ')
 				within group (order by sample_count desc) ash_string
 		from
 		(
 			--ASH summary with percentages.
 			select active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
-				,to_char(ratio_to_report(sample_count) over (partition by sql_plan_hash_value) * 100, '999.00') count_percent
+				,ratio_to_report(sample_count) over (partition by sql_plan_hash_value) count_percent
 				,sample_count, sample_distinct_count
 			from
 			(
