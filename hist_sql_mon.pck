@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.1.0';
+C_VERSION constant varchar2(100) := '1.2.0';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -81,9 +81,9 @@ select
 			--Add note about where the data came from.
 			case
 				when has_active_data = 1 and has_historical_data = 1 then
-					'Source         : Data came from both GV$ACTIVE_SESSION_HISTORY and DBA_HIST_ACTIVE_SESS_HISTORY.'
+					'Source         : Data came from both GV$ACTIVE_SESSION_HISTORY and DBA_HIST_ACTIVE_SESS_HISTORY.  Counts from GV$ACTIVE_SESSION_HISTORY are divided by 10 to match sampling frequency of historical data.'
 				when has_active_data = 1 and has_historical_data = 0 then
-					'Source         : Data came from GV$ACTIVE_SESSION_HISTORY only.'
+					'Source         : Data came from GV$ACTIVE_SESSION_HISTORY only.  Counts from GV$ACTIVE_SESSION_HISTORY are divided by 10 to match sampling frequency of historical data.'
 				when has_active_data = 0 and has_historical_data = 1 then
 					'Source         : Data came from DBA_HIST_ACTIVE_SESS_HISTORY only.'
 			end
@@ -101,8 +101,9 @@ from
 		plan_table_output
 			||
 			case
-				when plan_table_output like '| Id  |%' then ' '||trim('Event (count|distinct count) ')
+				when plan_table_output like '| Id  |%' then ' '||trim('Activity (%) | Activity Detail (# samples|# distinct samples) ')
 				when ash_string is not null then ' '||ash_string
+				when plan_table_output like '|%' and ash_string is null then '              |'
 			end plan_table_output
 		--Determine the maximum line length, for creating a text box.
 		,max(nvl(length(
@@ -110,8 +111,9 @@ from
 				plan_table_output
 					||
 					case
-						when plan_table_output like '| Id  |%' then ' '||trim('Event (count|distinct count) ')
+						when plan_table_output like '| Id  |%' then ' '||trim('Activity (%) | Activity Detail (# samples|# distinct samples) ')
 						when ash_string is not null then ' '||ash_string
+						when plan_table_output like '|%' and ash_string is null then '              |'
 					end
 			else null end
 		), 0)) over (partition by execution_plans.plan_hash_value) + 1 max_output_length
@@ -174,48 +176,56 @@ from
 		-----------
 		select sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time
 			,has_active_data, has_historical_data
-			,listagg(event||' ('||sample_count||'|'||sample_distinct_count||trim(') '), ', ')
+			,'     '||max(count_percent)||' | '||
+			listagg(event||' ('||sample_count||'|'||sample_distinct_count||trim(') '), ', ')
 				within group (order by sample_count desc) ash_string
 		from
 		(
-			--ASH summary.
+			--ASH summary with percentages.
 			select active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
-				--Multiply historical data by 10 since it is sampled 1/10th as much as active data.
-				,case when active_1_historical_2 = 1 then count(*) else count(*) * 10 end sample_count
-				,case when active_1_historical_2 = 1 then count(distinct sample_time) else count(distinct sample_time) * 10 end sample_distinct_count
+				,to_char(ratio_to_report(sample_count) over (partition by sql_plan_hash_value) * 100, '999.00') count_percent
+				,sample_count, sample_distinct_count
 			from
 			(
-				--ASH raw data with min and max sample times.
-				select active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, event, sample_time,
-					min(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) min_sample_time,
-					max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time,
-					max(case when active_1_historical_2 = 1 then 1 else 0 end) over (partition by sql_plan_hash_value, sql_plan_line_id) has_active_data,
-					max(case when active_1_historical_2 = 2 then 1 else 0 end) over (partition by sql_plan_hash_value, sql_plan_line_id) has_historical_data
+				--ASH summary.
+				select active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
+					--Divide active data by 10 since it is sampled 10 times more than historical data.
+					,case when active_1_historical_2 = 1 then ceil(count(*) / 10) else count(*) end sample_count
+					,case when active_1_historical_2 = 1 then ceil(count(distinct sample_time) / 10) else count(distinct sample_time) end sample_distinct_count
 				from
 				(
-					--ASH raw data.
-					select 1 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
-					from gv$active_session_history
-					where sql_id = :p_sql_id
-						and :uses_v$ash = 1
-						and sample_time between :start_date and :end_date
-						--Exclude data that will be in DBA_HIST.
-						and sample_time > :max_snap_date
-					union all
-					select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
-					from dba_hist_active_sess_history
-					where sql_id = :p_sql_id
-						--Enable partition pruning.
-						--Note that DBA_HIST_* tables do not always have matching SNAP_IDs.
-						--If this table has data that's not in DBA_HIST_SNAPSHOT it will be excluded here.
-						and dbid = :dbid
-						and snap_id between :start_snap_id and :end_snap_id
-						and sample_time between :start_date and :end_date
-				) ash_raw_data
-			) ash_raw_min_max_sample_time
-			group by active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
-			order by active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, count(*)
-		) ash_summary
+					--ASH raw data with min and max sample times.
+					select active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, event, sample_time,
+						min(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) min_sample_time,
+						max(sample_time) over (partition by sql_plan_hash_value, sql_plan_line_id) max_sample_time,
+						max(case when active_1_historical_2 = 1 then 1 else 0 end) over (partition by sql_plan_hash_value, sql_plan_line_id) has_active_data,
+						max(case when active_1_historical_2 = 2 then 1 else 0 end) over (partition by sql_plan_hash_value, sql_plan_line_id) has_historical_data
+					from
+					(
+						--ASH raw data.
+						select 1 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+						from gv$active_session_history
+						where sql_id = :p_sql_id
+							and :uses_v$ash = 1
+							and sample_time between :start_date and :end_date
+							--Exclude data that will be in DBA_HIST.
+							and sample_time > :max_snap_date
+						union all
+						select 2 active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, nvl(event, 'Cpu') event, sample_time
+						from dba_hist_active_sess_history
+						where sql_id = :p_sql_id
+							--Enable partition pruning.
+							--Note that DBA_HIST_* tables do not always have matching SNAP_IDs.
+							--If this table has data that's not in DBA_HIST_SNAPSHOT it will be excluded here.
+							and dbid = :dbid
+							and snap_id between :start_snap_id and :end_snap_id
+							and sample_time between :start_date and :end_date
+					) ash_raw_data
+				) ash_raw_min_max_sample_time
+				group by active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data, event
+				order by active_1_historical_2, sql_plan_hash_value, sql_plan_line_id, count(*)
+			) ash_summary
+		) ash_summary_with_percentages
 		group by sql_plan_hash_value, sql_plan_line_id, min_sample_time, max_sample_time, has_active_data, has_historical_data
 	) ash_data
 		on execution_plans.plan_hash_value = ash_data.sql_plan_hash_value
@@ -479,7 +489,8 @@ begin
 	v_header := v_header||
 		'Monitoring Metadata'||chr(10)||
 		'------------------------------ '||chr(10)||
-		' Reason Called       : '||v_reason||chr(10)||
+		--TODO - add this after REPORT_SQL_MONITOR support is added.
+		--' Reason Called       : '||v_reason||chr(10)||
 		' Report Created Date : '||to_char(sysdate, 'YYYY-MM-DD HH24:MI:SS')||chr(10)||
 		' Report Created by   : '||user||chr(10)||
 		' SQL_ID              : '||p_sql_id||chr(10)||
