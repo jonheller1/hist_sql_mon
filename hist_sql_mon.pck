@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.2.1';
+C_VERSION constant varchar2(100) := '1.2.2';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -461,11 +461,13 @@ begin
 					select to_char(regexp_replace(replace(substr(sql_text, 1, 100), chr(10), null), '\s+', ' '))
 					from dba_hist_sqltext
 					where sql_id = :p_sql_id
+						and rownum = 1
 				),
 				(
 					select distinct to_char(regexp_replace(replace(substr(sql_text, 1, 100), chr(10), null), '\s+', ' '))
 					from gv$sql
 					where sql_id = :p_sql_id
+						and rownum = 1
 				)
 			)
 			from dual
