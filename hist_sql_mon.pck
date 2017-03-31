@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.2.2';
+C_VERSION constant varchar2(100) := '1.2.3';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -451,7 +451,7 @@ return clob is
 	v_sql_text_first_100_char varchar2(100);
 begin
 	--Title
-	v_header := 'Historical SQL Monitoring '||C_VERSION||' (when Real-Time SQL Monitoring does not work)'||chr(10)||chr(10);
+	v_header := 'Historical SQL Monitoring '||C_VERSION||chr(10)||'(For when Real-Time SQL Monitoring does not work.  https://github.com/jonheller1/hist_sql_mon/ )'||chr(10)||chr(10);
 
 	--SQL Text.  Replace new-lines so that text is all on one line.
 	begin
