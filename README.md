@@ -54,7 +54,7 @@ See SQL_Monitoring_tutorial.sql for a more thorough example.
 
 
 ## How to Get Help
-Create a Github issue.  Or send an email to the creator, Jon Heller, at jonearles@yahoo.com
+Create a Github issue.  Or send an email to the creator, Jon Heller, at jon@jonheller.org
 
 
 ## Alternatives
