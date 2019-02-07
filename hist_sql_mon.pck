@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.2.3';
+C_VERSION constant varchar2(100) := '1.2.4';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -156,7 +156,7 @@ from
 				(
 					--Raw execution plan data.
 					select 'cursor' cursor_or_awr, rownum rownumber, plan_table_output
-					from table(dbms_xplan.display_cursor(sql_id => :p_sql_id))
+					from table(dbms_xplan.display_cursor(sql_id => :p_sql_id, cursor_child_no => (select min(child_number) from gv$sql where sql_id = :p_sql_id)))
 					union all
 					select 'awr'    cursor_or_awr, rownum rownumber, plan_table_output
 					from table(dbms_xplan.display_awr(sql_id => :p_sql_id))
@@ -546,7 +546,7 @@ begin
 	--Execute statement.
 	execute immediate C_HIST_SQL_MON_SQL
 	bulk collect into v_output_lines
-	using p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, v_max_snap_date, p_sql_id, v_dbid
+	using p_sql_id, p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, v_max_snap_date, p_sql_id, v_dbid
 		,v_start_snap_id, v_end_snap_id, v_start_date, v_end_date;
 
 	--Print it out for debugging.
