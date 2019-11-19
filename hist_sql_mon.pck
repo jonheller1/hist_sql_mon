@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.2.4';
+C_VERSION constant varchar2(100) := '1.2.5';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -65,8 +65,16 @@ C_SOURCE_DIRECT constant varchar2(100) := 'Results were directly requested from 
 C_SOURCE_DONE_ERROR constant varchar2(100) := 'REPORT_SQL_MONITOR finished with Done (Error).';
 C_SOURCE_NO_RESULTS constant varchar2(100) := 'REPORT_SQL_MONITOR did not display any results.';
 
+--12c+ the plan may be adaptive, which may add a dash to the plan number column.
+C_FORMAT constant varchar2(100) := 
+		$IF DBMS_DB_VERSION.VERSION >= 12 $THEN
+			', format => ''+adaptive'''
+		$ELSE
+			''
+		$END;
+
 C_HIST_SQL_MON_SQL constant varchar2(32767) :=
-substr(q'<
+replace(substr(q'<
 ----------------------------------
 --Historical SQL Monitoring Report
 ----------------------------------
@@ -131,8 +139,9 @@ from
 		--Use DISPLAY_CURSOR if possible, else use DISPLAY_AWR.
 		select last_plan_hash_value plan_hash_value, plan_table_output, rownumber
 			,case
-				when regexp_like(plan_table_output, '\|\s*[0-9]* \|.*') then
-					to_number(replace(substr(plan_table_output, 2, 5), '*', null))
+				--For rows in the formatted table, grab the number and ignore any "*", "|", or "-".
+				when regexp_like(plan_table_output, '\|-*\s*[0-9]* \|.*') then
+					to_number(replace(replace(replace(substr(plan_table_output, 2, 6), '*'), '|'), '-'))
 				else
 					null
 			end sql_plan_line_id
@@ -156,10 +165,10 @@ from
 				(
 					--Raw execution plan data.
 					select 'cursor' cursor_or_awr, rownum rownumber, plan_table_output
-					from table(dbms_xplan.display_cursor(sql_id => :p_sql_id, cursor_child_no => (select min(child_number) from gv$sql where sql_id = :p_sql_id)))
+					from table(dbms_xplan.display_cursor(sql_id => :p_sql_id, cursor_child_no => (select min(child_number) from gv$sql where sql_id = :p_sql_id)#FORMAT#))
 					union all
 					select 'awr'    cursor_or_awr, rownum rownumber, plan_table_output
-					from table(dbms_xplan.display_awr(sql_id => :p_sql_id))
+					from table(dbms_xplan.display_awr(sql_id => :p_sql_id#FORMAT#))
 				) raw_execution_plan_data
 			) plan_hash_sql_id
 			--Remove the repetitive "SQL_ID ...." text at the top.
@@ -234,7 +243,7 @@ from
 ) execution_plans_and_ash_data
 where count_per_hash > 0
 order by plan_hash_value, rownumber
->', 2);
+>', 2), '#FORMAT#', C_FORMAT);
 
 
 
@@ -543,13 +552,7 @@ begin
 	--Get header.
 	v_output_clob := get_hist_sql_mon_header(p_sql_id, p_start_time_filter, p_end_time_filter, p_source, v_warning);
 
-	--Execute statement.
-	execute immediate C_HIST_SQL_MON_SQL
-	bulk collect into v_output_lines
-	using p_sql_id, p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, v_max_snap_date, p_sql_id, v_dbid
-		,v_start_snap_id, v_end_snap_id, v_start_date, v_end_date;
-
-	--Print it out for debugging.
+	--Print the main SQL statement, for debugging.
 	--Since some tools have 4K limit, split it up around first linefeed after 3800.
 	v_sql := replace(replace(replace(replace(replace(replace(replace(replace(
 			C_HIST_SQL_MON_SQL, ':p_sql_id', ''''||p_sql_id||'''')
@@ -563,6 +566,12 @@ begin
 	dbms_output.enable(1000000);
 	dbms_output.put_line(substr(v_sql, 1, instr(v_sql, chr(10), 3800)-1));
 	dbms_output.put_line(substr(v_sql, instr(v_sql, chr(10), 3800)+1));
+
+	--Execute statement.
+	execute immediate C_HIST_SQL_MON_SQL
+	bulk collect into v_output_lines
+	using p_sql_id, p_sql_id, p_sql_id, p_sql_id, v_uses_v$ash, v_start_date, v_end_date, v_max_snap_date, p_sql_id, v_dbid
+		,v_start_snap_id, v_end_snap_id, v_start_date, v_end_date;
 
 	--Convert lines to CLOB.
 	for i in 1 .. v_output_lines.count loop
