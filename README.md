@@ -1,9 +1,9 @@
-`HIST_SQL_MON` 1.2.4
+`HIST_SQL_MON` 1.2.5
 ============
 
 Historical SQL Monitoring is an advanced performance tuning tool for Oracle databases.
 
-It resolves some limitations of [Real-Time SQL Monitoring](http://www.oracle.com/technetwork/database/manageability/sqlmonitor-084401.html) and assumes familiarity with that tool.  For example, Real-Time SQL Monitoring data ages out quickly, sometimes even while the query is executing.  Historical SQL Monitoring uses AWR to re-construct similar information.  Although it doesn't have as much information as Real-Time SQL Monitoring, it has the most important features:
+It resolves some limitations of [Real-Time SQL Monitoring](http://www.oracle.com/technetwork/database/manageability/sqlmonitor-084401.html) and assumes familiarity with that tool.  For example, Real-Time SQL Monitoring data ages out quickly, does not work for ginormous queries, and does not always include the percentages when the query finishes executing.  Historical SQL Monitoring uses AWR to re-construct similar information.  Although it doesn't have as much information as Real-Time SQL Monitoring, it has the most important features:
 
 * **Real numbers, not just estimates.**  Explain plans are helpful but they still leave you guessing at which operation is the slowest.  You should never have to guess where a statement is slow.
 * **Data aggregated at the operation level.**  Many tools, like AWR reports, only aggregate information for a time period or for a SQL statement.  In a data warehouse a single query often runs for many hours.  It is crucial to drill down to the lowest level, the operation.
@@ -59,7 +59,7 @@ Create a Github issue.  Or send an email to the creator, Jon Heller, at jon@jonh
 
 ## Alternatives
 
-The Oracle 12c Database Express Performance Hub includes Monitored SQL in historical mode.  But `hist_sql_mon` may still be useful in 12c since SQL Monitoring has unresolved bugs and will not always correctly monitor statements.
+The Oracle 12c Database Express Performance Hub includes Monitored SQL in historical mode.  But `hist_sql_mon` is still useful in 12c because SQL Monitoring is ridled with bugs and does not reliably work for large statements, which is exactcly when you most need the tool.
 
 
 ## License
