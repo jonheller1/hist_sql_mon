@@ -1,4 +1,4 @@
-`HIST_SQL_MON` 1.2.5
+`HIST_SQL_MON` 1.2.6
 ============
 
 Historical SQL Monitoring is an advanced performance tuning tool for Oracle databases.
