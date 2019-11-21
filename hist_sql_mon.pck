@@ -1,7 +1,7 @@
 create or replace package hist_sql_mon authid current_user is
 --Copyright (C) 2015 Jon Heller.  This program is licensed under the LGPLv3.
 
-C_VERSION constant varchar2(100) := '1.2.5';
+C_VERSION constant varchar2(100) := '1.2.6';
 
 /*
 Purpose: Extend Real-Time SQL Monitoring to Historical SQL Monitoring.  Uses AWR information
@@ -140,7 +140,7 @@ from
 		select last_plan_hash_value plan_hash_value, plan_table_output, rownumber
 			,case
 				--For rows in the formatted table, grab the number and ignore any "*", "|", or "-".
-				when regexp_like(plan_table_output, '\|-*\s*[0-9]* \|.*') then
+				when regexp_like(plan_table_output, '\|-*\**\s*[0-9]* \|.*') then
 					to_number(replace(replace(replace(substr(plan_table_output, 2, 6), '*'), '|'), '-'))
 				else
 					null
